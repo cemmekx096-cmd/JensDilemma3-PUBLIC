@@ -11,18 +11,22 @@ jobs:
     
     steps:
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
     
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: '3.9'
     
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y openjdk-11-jdk-headless android-sdk imagemagick ffmpeg
+        sudo apt-get install -y openjdk-11-jdk-headless imagemagick ffmpeg unzip curl
         pip install --upgrade pip Pillow
+        # Setup Android SDK root manually
+        mkdir -p $HOME/android-sdk/cmdline-tools/latest
+        echo "ANDROID_SDK_ROOT=$HOME/android-sdk" >> $GITHUB_ENV
+        echo "ANDROID_HOME=$HOME/android-sdk" >> $GITHUB_ENV
     
     - name: Download Ren'Py 8.2.3 SDK
       run: |
@@ -34,9 +38,14 @@ jobs:
     
     - name: Setup Android SDK
       run: |
-        yes | $ANDROID_SDK_ROOT/tools/bin/sdkmanager "platforms;android-30"
-        yes | $ANDROID_SDK_ROOT/tools/bin/sdkmanager "build-tools;30.0.3"
-        yes | $ANDROID_SDK_ROOT/tools/bin/sdkmanager "ndk;21.4.7075529"
+        cd $ANDROID_SDK_ROOT/cmdline-tools/latest
+        curl -s https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -o tools.zip
+        unzip -q tools.zip
+        rm tools.zip
+        yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses
+        yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager "platforms;android-30"
+        yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager "build-tools;30.0.3"
+        yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager "ndk;21.4.7075529"
         echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
     
     - name: Create Python script for smart dummy generation
@@ -242,7 +251,7 @@ jobs:
     
     - name: Upload APK artifact
       if: always()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: renpy-android-apk
         path: |
@@ -252,7 +261,7 @@ jobs:
     
     - name: Create Release
       if: always()
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
         files: |
           dist/*.apk
