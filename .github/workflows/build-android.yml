@@ -38,16 +38,20 @@ jobs:
     
     - name: Setup Android SDK
       run: |
-        cd $ANDROID_SDK_ROOT/cmdline-tools/latest
+        mkdir -p $ANDROID_SDK_ROOT/cmdline-tools
+        cd $ANDROID_SDK_ROOT/cmdline-tools
         curl -s https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -o tools.zip
         unzip -q tools.zip
         rm tools.zip
+        # PENTING: rename folder agar sdkmanager bisa diakses di path yang benar
+        mv cmdline-tools latest
+        
         yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses
         yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager "platforms;android-30"
         yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager "build-tools;30.0.3"
         yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager "ndk;21.4.7075529"
         echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
-    
+        
     - name: Create Python script for smart dummy generation
       run: |
         cat > /tmp/smart_dummies.py << 'EOF'
