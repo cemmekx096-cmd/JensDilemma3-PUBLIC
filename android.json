@@ -1,0 +1,17 @@
+{
+  "package": "com.example.game",
+  "name": "ExampleGame",
+  "version": "1.0",
+  "numeric_version": 1,
+  "orientation": "landscape",
+  "permissions": [],
+  "heap_size": "512m",
+  "store": "none",
+  "google_play_key": "",
+  "keystore": "",
+  "keyalias": "",
+  "keypass": "",
+  "bundle": false,
+  "include_pil": true,
+  "include_renpy": true
+}
