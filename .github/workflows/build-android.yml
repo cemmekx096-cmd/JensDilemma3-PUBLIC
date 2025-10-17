@@ -240,28 +240,18 @@ jobs:
         cd ${{ github.workspace }}
         $RENPY_PATH/renpy.sh $RENPY_PATH/launcher distribute --dest dist --quiet . || true
     
-    - name: Find and upload APK
+
+    - name: List build outputs
       run: |
-        find . -name "*.apk" -type f
-        ls -lah dist/ || echo "No dist folder, checking other locations..."
+        echo "=== Checking for APK files ==="
+        find ${{ github.workspace }} -name "*.apk" -type f 2>/dev/null || echo "No APK found"
+        ls -lah ${{ github.workspace }}/dist/ 2>/dev/null || echo "dist/ folder empty or missing"
+        ls -lah ${{ github.workspace }}/ | grep -E "\.apk|android"
     
     - name: Upload APK artifact
-      if: always()
       uses: actions/upload-artifact@v4
       with:
         name: renpy-android-apk
-        path: |
-          dist/*.apk
-          **/*.apk
+        path: ${{ github.workspace }}/**/*.apk
+        if-no-files-found: warn
         retention-days: 30
-    
-    - name: Create Release
-      if: always()
-      uses: softprops/action-gh-release@v2
-      with:
-        files: |
-          dist/*.apk
-          **/*.apk
-        tag_name: build-${{ github.run_number }}
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
