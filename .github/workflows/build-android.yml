@@ -8,134 +8,106 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    
+
     steps:
     - name: Checkout code
-      uses: actions/checkout@v3
-    
+      uses: actions/checkout@v4
+
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: '3.9'
-    
+
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y openjdk-11-jdk-headless
-        sudo apt-get install -y build-essential libssl-dev libffi-dev python3-dev
-        sudo apt-get install -y ffmpeg
+        sudo apt-get install -y openjdk-11-jdk-headless build-essential libssl-dev libffi-dev python3-dev ffmpeg
         pip install --upgrade pip setuptools wheel
         pip install buildozer cython pillow
-    
-    - name: Download Android SDK
+
+    - name: Download Android SDK & NDK
       run: |
-        mkdir -p ~/.android
-        touch ~/.android/repositories.cfg
-        
-        cd ~
+        mkdir -p $HOME/Android/cmdline-tools
+        cd $HOME/Android
         wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip
-        unzip -q commandlinetools-linux-9477386_latest.zip
-        mkdir -p Android/cmdline-tools
-        mv cmdline-tools Android/cmdline-tools/latest
-        
-        export PATH=$HOME/Android/cmdline-tools/latest/bin:$PATH
-        
-        # Accept all licenses
-        mkdir -p $HOME/.android
-        echo "y" | sdkmanager --licenses > /dev/null 2>&1 || true
-        
-        # Install components
-        sdkmanager "platforms;android-30"
-        sdkmanager "build-tools;30.0.3"
-        sdkmanager "ndk;21.4.7075529"
-        
+        unzip -q commandlinetools-linux-9477386_latest.zip -d cmdline-tools
+        mv cmdline-tools/cmdline-tools cmdline-tools/latest
+
+        export ANDROID_SDK_ROOT=$HOME/Android
+        export PATH=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH
+        yes | sdkmanager --licenses > /dev/null || true
+
+        sdkmanager --install "platform-tools" "platforms;android-30" "build-tools;30.0.3" "ndk;21.4.7075529" "tools" "cmdline-tools;latest"
+
         echo "ANDROID_SDK_ROOT=$HOME/Android" >> $GITHUB_ENV
         echo "ANDROID_NDK_ROOT=$HOME/Android/ndk/21.4.7075529" >> $GITHUB_ENV
-        echo "PATH=$HOME/Android/cmdline-tools/latest/bin:$PATH" >> $GITHUB_ENV
-    
+        echo "$HOME/Android/cmdline-tools/latest/bin" >> $GITHUB_PATH
+        echo "$HOME/Android/platform-tools" >> $GITHUB_PATH
+        echo "$HOME/Android/build-tools/30.0.3" >> $GITHUB_PATH
+
     - name: Generate dummy assets
       run: |
         python3 << 'EOF'
-        import os
-        import re
+        import os, re, subprocess
         from pathlib import Path
         from PIL import Image
-        import subprocess
-        
-        def create_dummy_image(filepath):
-            os.makedirs(os.path.dirname(filepath), exist_ok=True)
-            img = Image.new('RGB', (800, 600), color='white')
-            img.save(filepath)
-            print(f"✓ Image: {filepath}")
-        
-        def create_dummy_audio(filepath):
-            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+
+        def create_dummy_image(path):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            Image.new("RGB", (800, 600), "white").save(path)
+            print(f"✓ Created dummy image: {path}")
+
+        def create_dummy_audio(path):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
             subprocess.run([
-                'ffmpeg', '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=mono:d=1',
-                '-q:a', '9', '-acodec', 'libmp3lame',
-                filepath, '-y'
+                "ffmpeg", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono:d=1",
+                "-q:a", "9", "-acodec", "libmp3lame", path, "-y"
             ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            print(f"✓ Audio: {filepath}")
-        
-        game_dir = 'game'
-        
-        # Scan .rpy files for asset references
-        assets_img = set()
-        assets_audio = set()
-        
-        for rpy_file in Path(game_dir).rglob('*.rpy'):
+            print(f"✓ Created dummy audio: {path}")
+
+        assets_img, assets_audio = set(), set()
+        for rpy in Path("game").rglob("*.rpy"):
             try:
-                content = rpy_file.read_text(encoding='utf-8', errors='ignore')
-                
-                # Find image references
-                img_refs = re.findall(r'["\']([^"\']*\.(?:png|jpg|jpeg))["\']', content)
-                assets_img.update(img_refs)
-                
-                # Find audio references
-                audio_refs = re.findall(r'["\']([^"\']*\.(?:mp3|ogg|wav))["\']', content)
-                assets_audio.update(audio_refs)
-            except:
-                pass
-        
-        print("Creating missing images...")
-        for img_ref in sorted(assets_img):
-            img_path = Path(game_dir) / img_ref
-            if not img_path.exists():
-                create_dummy_image(str(img_path))
-        
-        print("\nCreating missing audio...")
-        for audio_ref in sorted(assets_audio):
-            audio_path = Path(game_dir) / audio_ref
-            if not audio_path.exists():
-                create_dummy_audio(str(audio_path))
-        
-        print("\n✅ Dummy assets complete!")
+                text = rpy.read_text(errors="ignore")
+                assets_img |= set(re.findall(r'["\']([^"\']*\.(?:png|jpg|jpeg))["\']', text))
+                assets_audio |= set(re.findall(r'["\']([^"\']*\.(?:mp3|ogg|wav))["\']', text))
+            except: pass
+
+        for img in sorted(assets_img):
+            path = Path("game") / img
+            if not path.exists(): create_dummy_image(str(path))
+
+        for aud in sorted(assets_audio):
+            path = Path("game") / aud
+            if not path.exists(): create_dummy_audio(str(path))
         EOF
-    
+
     - name: Build APK with Buildozer
       run: |
         cd ${{ github.workspace }}
         export ANDROID_SDK_ROOT=$HOME/Android
         export ANDROID_NDK_ROOT=$HOME/Android/ndk/21.4.7075529
-        export PATH=$HOME/Android/cmdline-tools/latest/bin:$PATH
-        
+        export PATH=$ANDROID_SDK_ROOT/build-tools/30.0.3:$PATH
+        export PATH=$ANDROID_SDK_ROOT/platform-tools:$PATH
+        export PATH=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH
+
         echo "=== Starting APK build ==="
         buildozer android release 2>&1 | tee build.log
-    
+
     - name: Check build results
       if: always()
       run: |
         echo "=== APK Search Results ==="
-        find ${{ github.workspace }} -name "*.apk" -type f 2>/dev/null || echo "No APK found"
-        
-        echo -e "\n=== Build Output (last 100 lines) ==="
-        tail -100 ${{ github.workspace }}/build.log 2>/dev/null || echo "No build.log"
-    
-    - name: Upload APK
+        find . -type f -name "*.apk" || echo "No APK found"
+        echo -e "\n=== Build Log (last 50 lines) ==="
+        tail -50 build.log || true
+
+    - name: Upload APK artifact
       if: success()
       uses: actions/upload-artifact@v4
       with:
         name: JensDilemma-Android
-        path: ${{ github.workspace }}/bin/*.apk
+        path: |
+          .buildozer/android/platform/build-*/dists/*/bin/*.apk
         if-no-files-found: warn
         retention-days: 30
