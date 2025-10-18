@@ -4,6 +4,9 @@ title = Jens Dilemma 3
 package.name = jensdilamma3
 package.domain = com.example
 
+# Source directory - PENTING!
+source.dir = game
+
 # Versi
 version = 1.0
 
