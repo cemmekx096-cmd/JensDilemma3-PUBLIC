@@ -3,7 +3,7 @@ name: Build Ren'Py Android APK
 on:
   push:
     branches: [ main, master ]
-  workflow_dispatch:
+  
 
 jobs:
   build:
@@ -29,21 +29,220 @@ jobs:
     - name: Download Android SDK
       run: |
         mkdir -p ~/.android
+        touch ~/.android/repositories.cfg
+        
         cd ~
         wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip
         unzip -q commandlinetools-linux-9477386_latest.zip
         mkdir -p Android/cmdline-tools
         mv cmdline-tools Android/cmdline-tools/latest
+        
         export PATH=$HOME/Android/cmdline-tools/latest/bin:$PATH
-        yes | sdkmanager --licenses
-        sdkmanager "platforms;android-30" "build-tools;30.0.3" "ndk;21.4.7075529"
+        
+        # Accept all licenses
+        mkdir -p $HOME/.android
+        echo "y" | sdkmanager --licenses > /dev/null 2>&1 || true
+        
+        # Install components
+        sdkmanager "platforms;android-30"
+        sdkmanager "build-tools;30.0.3"
+        sdkmanager "ndk;21.4.7075529"
+        
         echo "ANDROID_SDK_ROOT=$HOME/Android" >> $GITHUB_ENV
         echo "ANDROID_NDK_ROOT=$HOME/Android/ndk/21.4.7075529" >> $GITHUB_ENV
-    
-    - name: Generate dummy assets (optional)
-      continue-on-error: true
+        echo "PATH=$PATH" >> $GITHUB_ENV
+     - name: Create Python script for smart dummy generation
       run: |
-        python3 generate_dummies.py 2>/dev/null || true
+        cat > /tmp/smart_dummies.py << 'EOF'
+        import os
+        import re
+        from pathlib import Path
+        from PIL import Image
+        import subprocess
+        
+        def create_dummy_image(filepath, width=800, height=600):
+            """Create dummy image (white background)"""
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            img = Image.new('RGB', (width, height), color='white')
+            img.save(filepath)
+            print(f"✓ Image: {filepath}")
+        
+        def create_dummy_audio(filepath):
+            """Create 1 second silent audio"""
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            ext = Path(filepath).suffix.lower()
+            
+            # Generate silence dengan ffmpeg
+            cmd = [
+                'ffmpeg', '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=mono',
+                '-t', '1', '-q:a', '9', '-acodec', 'libmp3lame',
+                filepath, '-y'
+            ]
+            
+            if ext in ['.ogg', '.oga']:
+                cmd[-3] = 'libvorbis'
+                cmd[-2] = filepath.replace('.ogg', '.ogg').replace('.oga', '.oga')
+            
+            subprocess.run(cmd, capture_output=True)
+            print(f"✓ Audio: {filepath}")
+        
+        def create_dummy_video(filepath):
+            """Create 1 second dummy video"""
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            
+            cmd = [
+                'ffmpeg', '-f', 'lavfi', '-i', 'color=c=white:s=800x600:d=1',
+                '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=mono:d=1',
+                '-c:v', 'libx264', '-c:a', 'libmp3lame', '-q:a', '9',
+                filepath, '-y'
+            ]
+            subprocess.run(cmd, capture_output=True)
+            print(f"✓ Video: {filepath}")
+        
+        def scan_rpy_files(game_dir):
+            """Extract ALL asset references from .rpy files"""
+            assets = {'images': set(), 'audio': set(), 'video': set()}
+            
+            for rpy_file in Path(game_dir).rglob('*.rpy'):
+                try:
+                    content = rpy_file.read_text(encoding='utf-8', errors='ignore')
+                    
+                    # Image patterns
+                    img_patterns = [
+                        r'image\s+\w+\s*=\s*["\']([^"\']+)["\']',
+                        r'show\s+\w+\s+at\s+["\']?([^"\')\s]+)["\']?',
+                        r'scene\s+["\']?([^"\')\s]+)["\']?',
+                        r'background\s*["\']([^"\']+)["\']',
+                    ]
+                    
+                    # Audio patterns
+                    audio_patterns = [
+                        r'play\s+(?:music|sound|audio|bgm)\s+["\']([^"\']+)["\']',
+                        r'queue\s+music\s+["\']([^"\']+)["\']',
+                        r'stop\s+music|sound',
+                    ]
+                    
+                    # Video patterns
+                    video_patterns = [
+                        r'movie\s+["\']([^"\']+)["\']',
+                        r'play\s+movie\s+["\']([^"\']+)["\']',
+                    ]
+                    
+                    for pattern in img_patterns:
+                        matches = re.findall(pattern, content, re.IGNORECASE)
+                        assets['images'].update(m for m in matches if m)
+                    
+                    for pattern in audio_patterns:
+                        matches = re.findall(pattern, content, re.IGNORECASE)
+                        assets['audio'].update(m for m in matches if m)
+                    
+                    for pattern in video_patterns:
+                        matches = re.findall(pattern, content, re.IGNORECASE)
+                        assets['video'].update(m for m in matches if m)
+                
+                except Exception as e:
+                    print(f"Warning: {rpy_file} - {e}")
+            
+            return assets
+        
+        def main():
+            game_dir = 'game'
+            assets = scan_rpy_files(game_dir)
+            
+            print("=== Scanning for missing assets ===\n")
+            
+            # Images
+            print("Creating dummy images...")
+            for img_ref in sorted(assets['images']):
+                img_path = Path(game_dir) / img_ref
+                if not img_path.exists():
+                    # Add common extensions if missing
+                    if not any(str(img_path).endswith(ext) for ext in ['.png', '.jpg', '.jpeg']):
+                        img_path = Path(str(img_path) + '.png')
+                    
+                    if not img_path.exists():
+                        create_dummy_image(str(img_path))
+            
+            # Scan images folder for any file references
+            for img_file in Path(game_dir).rglob('*.rpy'):
+                content = img_file.read_text(encoding='utf-8', errors='ignore')
+                # Find inline path references
+                inline_imgs = re.findall(r'["\']([^"\']*\.(?:png|jpg|jpeg|webp))["\']', content)
+                for img_ref in inline_imgs:
+                    img_path = Path(game_dir) / img_ref
+                    if not img_path.exists():
+                        create_dummy_image(str(img_path))
+            
+            # Audio
+            print("\nCreating dummy audio files...")
+            for audio_ref in sorted(assets['audio']):
+                audio_path = Path(game_dir) / audio_ref
+                if not audio_path.exists():
+                    # Add common extensions if missing
+                    if not any(str(audio_path).endswith(ext) for ext in ['.mp3', '.ogg', '.wav']):
+                        audio_path = Path(str(audio_path) + '.mp3')
+                    
+                    if not audio_path.exists():
+                        create_dummy_audio(str(audio_path))
+            
+            # Scan for inline audio references
+            for audio_file in Path(game_dir).rglob('*.rpy'):
+                content = audio_file.read_text(encoding='utf-8', errors='ignore')
+                inline_audios = re.findall(r'["\']([^"\']*\.(?:mp3|ogg|wav|m4a))["\']', content)
+                for audio_ref in inline_audios:
+                    audio_path = Path(game_dir) / audio_ref
+                    if not audio_path.exists():
+                        create_dummy_audio(str(audio_path))
+            
+            # Video
+            print("\nCreating dummy video files...")
+            for video_ref in sorted(assets['video']):
+                video_path = Path(game_dir) / video_ref
+                if not video_path.exists():
+                    if not any(str(video_path).endswith(ext) for ext in ['.mp4', '.webm', '.ogv']):
+                        video_path = Path(str(video_path) + '.mp4')
+                    
+                    if not video_path.exists():
+                        create_dummy_video(str(video_path))
+            
+            print("\n✅ Dummy assets generation complete!")
+        
+        if __name__ == '__main__':
+            main()
+        EOF
+        python3 /tmp/smart_dummies.py
+    
+    - name: Scan for any remaining missing assets
+      run: |
+        cat > /tmp/fix_missing.py << 'EOF'
+        import os
+        import re
+        from pathlib import Path
+        from PIL import Image
+        import subprocess
+        
+        game_dir = 'game'
+        
+        # Create images folder if empty
+        img_dir = Path(game_dir) / 'images'
+        if img_dir.exists() and not any(img_dir.iterdir()):
+            img = Image.new('RGB', (800, 600), color='white')
+            img.save(img_dir / 'placeholder.png')
+            print("✓ Created placeholder image")
+        
+        # Create audio folder placeholders
+        audio_dir = Path(game_dir) / 'audio'
+        if audio_dir.exists() and not any(audio_dir.iterdir()):
+            subprocess.run([
+                'ffmpeg', '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=mono:d=1',
+                '-q:a', '9', '-acodec', 'libmp3lame',
+                str(audio_dir / 'placeholder.mp3'), '-y'
+            ], capture_output=True)
+            print("✓ Created placeholder audio")
+        EOF
+        python3 /tmp/fix_missing.py || true
+    
+    
     
     - name: Build APK with Buildozer
       run: |
