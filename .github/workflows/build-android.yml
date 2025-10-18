@@ -18,74 +18,54 @@ jobs:
       with:
         python-version: '3.9'
     
-    - name: Install Java & Android tools
+    - name: Install dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y openjdk-11-jdk-headless
-        sudo apt-get install -y android-sdk android-sdk-build-tools
+        sudo apt-get install -y build-essential libssl-dev libffi-dev python3-dev
+        pip install --upgrade pip setuptools wheel
+        pip install buildozer cython
     
-    - name: Download Ren'Py SDK
+    - name: Download Android SDK
       run: |
+        mkdir -p ~/.android
         cd ~
-        wget -q https://www.renpy.org/dl/8.2.3/renpy-8.2.3-sdk.tar.bz2
-        tar xjf renpy-8.2.3-sdk.tar.bz2
-        echo "RENPY_PATH=$HOME/renpy-8.2.3-sdk" >> $GITHUB_ENV
-    
-    - name: Setup Android config files
-      continue-on-error: true
-      run: |
-        python3 setup_android_files.py || true
+        wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip
+        unzip -q commandlinetools-linux-9477386_latest.zip
+        mkdir -p Android/cmdline-tools
+        mv cmdline-tools Android/cmdline-tools/latest
+        export PATH=$HOME/Android/cmdline-tools/latest/bin:$PATH
+        yes | sdkmanager --licenses
+        sdkmanager "platforms;android-30" "build-tools;30.0.3" "ndk;21.4.7075529"
+        echo "ANDROID_SDK_ROOT=$HOME/Android" >> $GITHUB_ENV
+        echo "ANDROID_NDK_ROOT=$HOME/Android/ndk/21.4.7075529" >> $GITHUB_ENV
     
     - name: Generate dummy assets (optional)
       continue-on-error: true
       run: |
         python3 generate_dummies.py 2>/dev/null || true
     
-    - name: Configure Android build
-      run: |
-        mkdir -p ~/.renpy
-        cat > ~/.renpy/android.json << 'EOF'
-        {
-          "package": "com.example.jensdilamma",
-          "name": "Jens Dilemma",
-          "version": "1.0",
-          "orientation": "landscape",
-          "icon_filename": "game/gui/window_icon.png",
-          "presplash_filename": "game/gui/presplash.png",
-          "android_api": "30",
-          "android_ndk": "21.4.7075529",
-          "android_sdk": "30"
-        }
-        EOF
-    
-    - name: Build APK
+    - name: Build APK with Buildozer
       run: |
         cd ${{ github.workspace }}
-        echo "=== Starting Android build ==="
-        echo "RENPY_PATH: $RENPY_PATH"
-        echo "Current dir: $(pwd)"
-        ls -la
+        export PATH=$HOME/Android/cmdline-tools/latest/bin:$PATH
+        export ANDROID_SDK_ROOT=$HOME/Android
+        export ANDROID_NDK_ROOT=$HOME/Android/ndk/21.4.7075529
         
-        echo -e "\n=== Installing SDK ==="
-        python3 $RENPY_PATH/rapt.py installsdk 2>&1 | tail -20
-        
-        echo -e "\n=== Configuring build ==="
-        python3 $RENPY_PATH/rapt.py configure 2>&1 | tail -20
-        
-        echo -e "\n=== Building APK (this may take a while) ==="
-        python3 $RENPY_PATH/rapt.py build . release 2>&1
+        echo "=== Building APK ==="
+        buildozer android release 2>&1 | tee build.log
     
     - name: Check for APK
       if: always()
       run: |
-        echo "=== Searching for APK files ==="
-        find ${{ github.workspace }} -name "*.apk" -type f 2>/dev/null | head -20 || echo "No APK found"
+        echo "=== Searching for APK ==="
+        find ${{ github.workspace }} -name "*.apk" -type f 2>/dev/null || echo "No APK found"
         
-        echo -e "\n=== Checking bin/ folder ==="
-        ls -lah ${{ github.workspace }}/bin/ 2>/dev/null || echo "No bin/ folder"
+        echo -e "\n=== Checking bin folder ==="
+        ls -lah ${{ github.workspace }}/bin/ 2>/dev/null || echo "No bin folder"
         
-        echo -e "\n=== Checking full structure ==="
-        find ${{ github.workspace }} -maxdepth 3 -type d | head -30
+        echo -e "\n=== Last 50 lines of build log ==="
+        tail -50 ${{ github.workspace }}/build.log 2>/dev/null || echo "No build.log"
     
     - name: Upload APK
       if: success()
