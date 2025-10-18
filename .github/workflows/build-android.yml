@@ -1,8 +1,6 @@
-name: Build Ren'Py Android APK
+name: 🏍️🏍️
 
 on:
-  push:
-    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
